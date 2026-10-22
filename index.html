@@ -1,5 +1,11 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f1f4f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1411" media="(prefers-color-scheme: dark)">
 <title>Trading Calendar</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -41,6 +47,8 @@
 }
 
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; }
 [hidden] { display: none !important; }
 body {
   background: var(--bg); color: var(--ink);
@@ -70,9 +78,12 @@ button { font: inherit; color: inherit; }
 .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
 .top h1 { font-size: clamp(28px, 4.2vw, 40px); font-weight: 700; line-height: 1.05; }
 .top p { margin: 6px 0 0; color: var(--muted); }
+.backup { display: grid; gap: 8px; justify-items: end; }
+.backup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.backup .hint { text-align: right; max-width: 34ch; }
+@media (max-width: 640px) { .backup { justify-items: start; } .backup .hint { text-align: left; } }
 .sync { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .sync i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
-.sync[data-mode="db"] i { background: var(--gain); }
 .sync[data-mode="local"] i { background: var(--cash); }
 
 /* Summary */
@@ -210,14 +221,23 @@ textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
-
+</head>
+<body>
 <div class="wrap">
   <header class="top">
     <div>
       <h1>Trading Calendar</h1>
       <p id="subline">Log every day. Win, loss or rest, it goes in the book.</p>
     </div>
-    <div class="sync" id="sync" data-mode="loading"><i></i><span id="syncText">Connecting…</span></div>
+    <div class="backup">
+      <div class="sync" id="sync" data-mode="local"><i></i><span id="syncText">Saved on this device</span></div>
+      <div class="backup-actions">
+        <button class="iconbtn" id="exportBtn" type="button">Download backup</button>
+        <label class="iconbtn" for="importFile">Restore backup</label>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+      </div>
+      <div class="hint" id="backupNote"></div>
+    </div>
   </header>
 
   <section class="summary">
@@ -408,74 +428,71 @@ textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
     journalAll: false,
   };
 
-  // ---------- storage ----------
+  // ---------- storage (this browser) ----------
   const store = {
-    mode: "loading",
-    db: null,
-    loadLocal() {
+    load() {
       try {
         const raw = localStorage.getItem(LOCAL_KEY);
         if (raw) { const p = JSON.parse(raw); state.entries = p.entries || {}; if (p.settings) state.settings = p.settings; }
       } catch (e) {}
     },
-    saveLocal() {
-      try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ entries: state.entries, settings: state.settings })); return true; }
-      catch (e) { return false; }
+    save() {
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ entries: state.entries, settings: state.settings, savedAt: new Date().toISOString() })); }
+      catch (e) { throw { message: "this browser blocked saving (private browsing can do this)" }; }
     },
-    async put(date, data) {
-      if (this.mode === "db") await this.db.collection("journal").doc(date).set(data);
-      state.entries[date] = data;
-      if (this.mode !== "db" && !this.saveLocal()) throw { message: "This browser blocked saving." };
-    },
-    async remove(date) {
-      if (this.mode === "db") await this.db.collection("journal").doc(date).delete();
-      delete state.entries[date];
-      if (this.mode !== "db") this.saveLocal();
-    },
-    async putSettings(s) {
-      if (this.mode === "db") await this.db.doc("settings/account").set(s);
-      state.settings = s;
-      if (this.mode !== "db") this.saveLocal();
-    },
+    async put(date, data) { state.entries[date] = data; this.save(); },
+    async remove(date) { delete state.entries[date]; this.save(); },
+    async putSettings(s) { state.settings = s; this.save(); },
   };
 
-  function setSync(mode, text) {
-    store.mode = mode;
-    $("#sync").dataset.mode = mode;
-    $("#syncText").textContent = text;
+  function start() {
+    store.load();
+    renderAll(true);
+    updateBackupNote();
+    // Ask the browser not to clear this site's data when space runs low.
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   }
 
-  async function connect() {
-    if (!window.claude || typeof window.claude.use !== "function") {
-      store.loadLocal();
-      setSync("local", "Saved in this browser");
-      renderAll(true);
-      return;
-    }
-    let db = null;
-    try { db = await window.claude.use("db"); } catch (e) { db = null; }
-    if (!db) {
-      store.loadLocal();
-      setSync("local", "Saved in this browser only");
-      renderAll(true);
-      return;
-    }
-    store.db = db;
-    setSync("db", "Saved to your account");
-    db.collection("journal").onSnapshot((snap) => {
-      const next = {};
-      snap.docs.forEach((d) => { if (d.exists) next[d.id] = d.data(); });
-      state.entries = next;
-      renderAll(!state.dirty);
-    }, () => setSync("local", "Connection lost. Reload to keep saving"));
-    db.doc("settings/account").onSnapshot((snap) => {
-      if (snap.exists) {
-        const s = snap.data();
-        if (typeof s.opening === "number") state.settings = { ...state.settings, ...s };
-        renderAll(false);
-      }
-    }, () => {});
+  // ---------- backup ----------
+  const BACKUP_KEY = "trading-calendar-last-backup";
+  function updateBackupNote() {
+    let last = null;
+    try { last = localStorage.getItem(BACKUP_KEY); } catch (e) {}
+    const n = Object.keys(state.entries).length;
+    $("#backupNote").textContent = !n
+      ? "Your entries stay on this device. Download a backup now and then to keep them safe."
+      : last
+        ? "Last backup " + shortDate(last.slice(0, 10)) + "."
+        : "No backup yet. Download one so you don't lose your entries.";
   }
+  $("#exportBtn").addEventListener("click", () => {
+    const data = JSON.stringify({ app: "trading-calendar", version: 1, exportedAt: new Date().toISOString(), settings: state.settings, entries: state.entries }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = "trading-calendar-backup-" + todayStr + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try { localStorage.setItem(BACKUP_KEY, todayStr); } catch (e) {}
+    updateBackupNote();
+  });
+  $("#importFile").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    if (!file) return;
+    try {
+      const p = JSON.parse(await file.text());
+      if (!p || typeof p.entries !== "object" || !p.settings || typeof p.settings.opening !== "number") throw 0;
+      state.entries = p.entries; state.settings = p.settings; state.dirty = false;
+      store.save();
+      renderAll(true);
+      updateBackupNote();
+      const n = Object.keys(p.entries).length;
+      setStatus("Restored " + n + (n === 1 ? " day" : " days") + " from " + file.name + ".", "ok");
+    } catch (e) {
+      setStatus("That file isn't a Trading Calendar backup. Pick a file you downloaded with Download backup.", "err");
+    }
+    $("#sheet").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   // ---------- derived numbers ----------
   function derive() {
@@ -529,6 +546,7 @@ textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
     renderLists(D);
     if (refreshSheet) fillSheet();
     else updateSheetBalances();
+    updateBackupNote();
   }
 
   function renderSummary(D) {
@@ -560,7 +578,7 @@ textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
 
     $("#sPlan").textContent = D.planN ? Math.round((D.planYes / D.planN) * 100) + "%" : "–";
     $("#sPlanSub").textContent = D.planN
-      ? D.planYes + " of " + D.planN + " days · streak " + D.streak
+      ? D.planYes + " of " + D.planN + (D.planN === 1 ? " day" : " days") + " · streak " + D.streak
       : "mark it on each trading day";
 
     const first = D.dates[0];
@@ -929,6 +947,8 @@ textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
   window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => renderChart(derive()), 120); });
 
   renderAll(true);
-  connect();
+  start();
 })();
 </script>
+</body>
+</html>
