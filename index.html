@@ -1,0 +1,934 @@
+<title>Trading Calendar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: ledger app — balance + stats strip, then calendar beside a day sheet, then withdrawals and journal side by side. */
+:root {
+  --bg: #f1f4f0;
+  --surface: #ffffff;
+  --sunk: #e8ece7;
+  --ink: #17201b;
+  --muted: #5d6a62;
+  --line: #d9e0d9;
+  --gain: #12775a;
+  --gain-soft: #dcefe5;
+  --loss: #b23a2f;
+  --loss-soft: #f7e0dc;
+  --cash: #8a5a10;
+  --cash-soft: #f3e7cf;
+  --accent: #27467f;
+  --accent-soft: #e1e8f5;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1411; --surface: #171e1a; --sunk: #1d2520; --ink: #e5ebe6; --muted: #93a198; --line: #29332d;
+    --gain: #4ec99b; --gain-soft: #15322a; --loss: #f07c6f; --loss-soft: #3a1f1b;
+    --cash: #e2b264; --cash-soft: #382b15; --accent: #93b2ef; --accent-soft: #1d2840;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1411; --surface: #171e1a; --sunk: #1d2520; --ink: #e5ebe6; --muted: #93a198; --line: #29332d;
+  --gain: #4ec99b; --gain-soft: #15322a; --loss: #f07c6f; --loss-soft: #3a1f1b;
+  --cash: #e2b264; --cash-soft: #382b15; --accent: #93b2ef; --accent-soft: #1d2840;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px;
+}
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.gain { color: var(--gain); }
+.loss { color: var(--loss); }
+.cash { color: var(--cash); }
+.muted { color: var(--muted); }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.label {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
+.top h1 { font-size: clamp(28px, 4.2vw, 40px); font-weight: 700; line-height: 1.05; }
+.top p { margin: 6px 0 0; color: var(--muted); }
+.sync { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.sync i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.sync[data-mode="db"] i { background: var(--gain); }
+.sync[data-mode="local"] i { background: var(--cash); }
+
+/* Summary */
+.summary { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.balance { padding: 20px 20px 12px; display: grid; gap: 4px; min-width: 0; }
+.balance-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.big { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: clamp(34px, 5.4vw, 52px); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
+.delta { font-size: 14px; font-weight: 500; }
+.opening { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.opening input { width: 110px; }
+#chart { margin-top: 8px; height: 150px; }
+#chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.stat { background: var(--surface); padding: 16px 18px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.stat .v { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.stat .s { font-size: 13px; color: var(--muted); }
+.meter { height: 6px; border-radius: 3px; background: var(--loss-soft); overflow: hidden; margin-top: 4px; }
+.meter b { display: block; height: 100%; background: var(--gain); width: 0; transition: width .4s ease; }
+
+/* Main: calendar + day sheet */
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.cal { padding: 16px; min-width: 0; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.cal-head h2 { font-size: 24px; font-weight: 700; }
+.nav { display: flex; gap: 6px; }
+.iconbtn {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; height: 34px; min-width: 34px; padding: 0 10px;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500;
+}
+.iconbtn:hover { background: var(--sunk); }
+.grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(0, 0.95fr); gap: 4px; }
+.dow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 2px 6px 4px; }
+.day {
+  position: relative; min-height: 84px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface);
+  padding: 6px 7px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.day:hover { border-color: var(--muted); }
+.day.blank { background: transparent; border-style: dashed; border-color: var(--line); cursor: default; opacity: .5; }
+.day.weekend:not(.has) { background: var(--sunk); }
+.day .d { font-size: 12px; font-weight: 600; color: var(--muted); line-height: 1; }
+.day.today .d { color: var(--accent); }
+.day.today::after { content: ""; position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.day.selected { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.day.win { background: var(--gain-soft); border-color: transparent; }
+.day.loss { background: var(--loss-soft); border-color: transparent; }
+.day .amt { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 13.5px; font-weight: 600; margin-top: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day .tag { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day .out { font-family: var(--font-num); font-size: 11px; color: var(--cash); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day .marks { display: flex; gap: 4px; position: absolute; top: 6px; right: 16px; }
+.day .marks span { width: 6px; height: 6px; border-radius: 50%; }
+.mk-note { background: var(--muted); }
+.mk-broke { background: var(--loss); }
+.wk { border-radius: 8px; background: var(--sunk); padding: 6px 8px; display: flex; flex-direction: column; justify-content: space-between; min-height: 84px; min-width: 0; }
+.wk .l { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.wk .v { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.month-foot { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+.month-foot b { color: var(--ink); font-family: var(--font-num); font-weight: 600; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* Day sheet */
+.sheet { padding: 18px; display: grid; gap: 16px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+.sheet-head { display: grid; gap: 2px; }
+.sheet-head h2 { font-size: 21px; font-weight: 700; }
+.balline { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); padding: 10px 12px; background: var(--sunk); border-radius: 8px; flex-wrap: wrap; }
+.balline b { font-family: var(--font-num); color: var(--ink); font-weight: 600; }
+.field { display: grid; gap: 6px; }
+.field > label, .field > .label { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: 0; text-transform: none; }
+.seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--sunk); border-radius: 9px; padding: 3px; gap: 3px; }
+.seg.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; padding: 7px 4px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--muted); white-space: nowrap; }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+.seg input:checked + label { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.seg input[value="win"]:checked + label, .seg input[value="yes"]:checked + label { background: var(--gain); color: var(--surface); }
+.seg input[value="loss"]:checked + label, .seg input[value="no"]:checked + label { background: var(--loss); color: var(--surface); }
+.money { position: relative; }
+.money span { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-family: var(--font-num); color: var(--muted); pointer-events: none; }
+.money input[type="text"] { padding-left: 28px; }
+input[type="text"], input[type="number"], textarea {
+  width: 100%; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+}
+input.n { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+input:disabled { background: var(--sunk); color: var(--muted); }
+textarea { min-height: 130px; resize: vertical; line-height: 1.5; }
+.row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hint { font-size: 12px; color: var(--muted); }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn { border: 0; border-radius: 8px; padding: 10px 16px; font-weight: 600; cursor: pointer; background: var(--ink); color: var(--bg); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 500; }
+.btn.ghost.armed { color: var(--loss); border-color: var(--loss); }
+.status { font-size: 13px; color: var(--muted); min-height: 1.5em; }
+.status.err { color: var(--loss); }
+.status.ok { color: var(--gain); }
+
+/* Lower */
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 16px; align-items: start; }
+.lower .panel { padding: 18px; display: grid; gap: 12px; min-width: 0; }
+.lower-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.lower-head h2 { font-size: 19px; font-weight: 700; }
+.list { display: grid; }
+.item { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--line); background: none; border-left: 0; border-right: 0; border-bottom: 0; text-align: left; cursor: pointer; width: 100%; }
+.item:hover .when { color: var(--accent); }
+.item-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.when { font-weight: 600; font-size: 14px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--sunk); color: var(--muted); white-space: nowrap; }
+.chip.win { background: var(--gain-soft); color: var(--gain); }
+.chip.loss { background: var(--loss-soft); color: var(--loss); }
+.chip.cash { background: var(--cash-soft); color: var(--cash); }
+.note { color: var(--ink); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 68ch; }
+.empty { padding: 14px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 14px; }
+.wd-total { display: flex; justify-content: space-between; gap: 10px; padding: 12px 14px; background: var(--cash-soft); border-radius: 8px; color: var(--cash); font-weight: 600; flex-wrap: wrap; }
+
+@media (max-width: 980px) {
+  .summary, .main, .lower { grid-template-columns: minmax(0, 1fr); }
+  .sheet { position: static; }
+}
+@media (max-width: 640px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+  .grid .wk, .grid .dow.wkh { display: none; }
+  .day { min-height: 58px; padding: 5px 4px; }
+  .day .amt { font-size: 11px; }
+  .day .tag { display: none; }
+  .day .out { font-size: 10px; }
+  .day .marks { right: 12px; top: 5px; }
+  .day.today::after { top: 6px; right: 4px; }
+  .cal { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Trading Calendar</h1>
+      <p id="subline">Log every day. Win, loss or rest, it goes in the book.</p>
+    </div>
+    <div class="sync" id="sync" data-mode="loading"><i></i><span id="syncText">Connecting…</span></div>
+  </header>
+
+  <section class="summary">
+    <div class="panel balance">
+      <div class="label">Account balance</div>
+      <div class="balance-row">
+        <div class="big" id="balance">R250.00</div>
+        <div class="delta num" id="growth"></div>
+      </div>
+      <div class="opening" id="openingRow">
+        <span>Opening balance <b class="num" id="openingVal">R250.00</b></span>
+        <button class="linkbtn" id="editOpening" type="button">Change</button>
+      </div>
+      <form class="opening" id="openingForm" hidden>
+        <label for="openingInput">Opening balance</label>
+        <div class="money"><span>R</span><input class="n" id="openingInput" type="text" inputmode="decimal"></div>
+        <button class="btn" type="submit" style="padding:7px 12px">Save</button>
+        <button class="linkbtn" id="cancelOpening" type="button">Cancel</button>
+      </form>
+      <div id="chart" aria-label="Balance over time"></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="label">Net profit / loss</span>
+        <span class="v" id="sNet">R0.00</span>
+        <span class="s" id="sNetSub">from trading only</span>
+      </div>
+      <div class="stat">
+        <span class="label">Withdrawn</span>
+        <span class="v cash" id="sOut">R0.00</span>
+        <span class="s" id="sOutSub">no withdrawals yet</span>
+      </div>
+      <div class="stat">
+        <span class="label">Win rate</span>
+        <span class="v" id="sRate">–</span>
+        <span class="s" id="sRateSub">0 wins · 0 losses</span>
+        <div class="meter"><b id="sRateBar"></b></div>
+      </div>
+      <div class="stat">
+        <span class="label">Plan followed</span>
+        <span class="v" id="sPlan">–</span>
+        <span class="s" id="sPlanSub">mark it on each trading day</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="main">
+    <div class="panel cal">
+      <div class="cal-head">
+        <h2 id="monthTitle">October 2026</h2>
+        <div class="nav">
+          <button class="iconbtn" id="prevM" type="button" aria-label="Previous month">‹</button>
+          <button class="iconbtn" id="todayBtn" type="button">Today</button>
+          <button class="iconbtn" id="nextM" type="button" aria-label="Next month">›</button>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="month-foot" id="monthFoot"></div>
+      <div class="legend">
+        <span><i style="background:var(--gain-soft)"></i>Green day</span>
+        <span><i style="background:var(--loss-soft)"></i>Red day</span>
+        <span><i style="background:var(--cash)"></i>Withdrawal</span>
+        <span><i style="background:var(--muted);border-radius:50%"></i>Has notes</span>
+        <span><i style="background:var(--loss);border-radius:50%"></i>Broke my plan</span>
+      </div>
+    </div>
+
+    <form class="panel sheet" id="sheet" autocomplete="off">
+      <div class="sheet-head">
+        <span class="label" id="sheetEyebrow">Today</span>
+        <h2 id="sheetTitle">Thursday, 22 October</h2>
+      </div>
+      <div class="balline">
+        <span>Start of day <b id="balBefore">R250.00</b></span>
+        <span>End of day <b id="balAfter">R250.00</b></span>
+      </div>
+
+      <div class="field">
+        <span class="label">How did the day go?</span>
+        <div class="seg" role="radiogroup" aria-label="Result">
+          <input type="radio" name="result" id="rWin" value="win"><label for="rWin">Win</label>
+          <input type="radio" name="result" id="rLoss" value="loss"><label for="rLoss">Loss</label>
+          <input type="radio" name="result" id="rBe" value="be"><label for="rBe">Break-even</label>
+          <input type="radio" name="result" id="rNone" value="none" checked><label for="rNone">No trade</label>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="amount" id="amountLabel">Amount</label>
+          <div class="money"><span>R</span><input class="n" id="amount" type="text" inputmode="decimal" placeholder="0.00" disabled></div>
+        </div>
+        <div class="field">
+          <label for="trades">Trades taken</label>
+          <input class="n" id="trades" type="text" inputmode="numeric" placeholder="0">
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">Did I follow my plan?</span>
+        <div class="seg two" role="radiogroup" aria-label="Followed plan">
+          <input type="radio" name="plan" id="pYes" value="yes"><label for="pYes">Yes, I did</label>
+          <input type="radio" name="plan" id="pNo" value="no"><label for="pNo">No, I broke it</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="withdrawal">Withdrawal</label>
+        <div class="money"><span>R</span><input class="n" id="withdrawal" type="text" inputmode="decimal" placeholder="0.00"></div>
+        <span class="hint">Money you took out of the account on this day. It lowers your balance but doesn't count as a loss.</span>
+      </div>
+
+      <div class="field">
+        <label for="note">Notes</label>
+        <textarea id="note" placeholder="What was my setup? Did I wait for confirmation? What did I do well, and what will I fix tomorrow?"></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="saveBtn" type="submit">Save day</button>
+        <button class="btn ghost" id="clearBtn" type="button">Clear day</button>
+      </div>
+      <div class="status" id="status" role="status"></div>
+    </form>
+  </section>
+
+  <section class="lower">
+    <div class="panel">
+      <div class="lower-head">
+        <h2>Withdrawals</h2>
+        <button class="linkbtn" id="addWithdrawal" type="button">Record a withdrawal</button>
+      </div>
+      <div class="wd-total"><span>Total withdrawn</span><span class="num" id="wdTotal">R0.00</span></div>
+      <div class="list" id="wdList"></div>
+    </div>
+    <div class="panel">
+      <div class="lower-head">
+        <h2>Journal</h2>
+        <span class="muted" style="font-size:13px" id="journalCount"></span>
+      </div>
+      <div class="list" id="journal"></div>
+      <button class="linkbtn" id="moreJournal" type="button" hidden>Show all entries</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const LOCAL_KEY = "trading-calendar-v1";
+
+  // ---------- helpers ----------
+  const pad = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  const parseYmd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const money = (n) => "R" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const moneyS = (n) => (n < 0 ? "−" : "") + money(n);
+  const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + money(n);
+  function compact(n) {
+    const v = Math.abs(n);
+    let s;
+    if (v >= 10000) s = (v / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    else if (Number.isInteger(v)) s = v.toLocaleString("en-US");
+    else s = v.toFixed(2);
+    return (n > 0 ? "+" : n < 0 ? "−" : "") + "R" + s;
+  }
+  function parseAmount(str) {
+    const t = String(str || "").replace(/[R\s]/gi, "").replace(",", ".");
+    if (t === "") return 0;
+    const n = Number(t);
+    return Number.isFinite(n) ? round2(n) : NaN;
+  }
+  const longDate = (s) => { const d = parseYmd(s); return DAYS[d.getDay()] + ", " + d.getDate() + " " + MONTHS[d.getMonth()]; };
+  const shortDate = (s) => { const d = parseYmd(s); return DAYS[d.getDay()].slice(0, 3) + " " + d.getDate() + " " + MONTHS[d.getMonth()].slice(0, 3) + " " + d.getFullYear(); };
+  const svgEl = (tag, attrs) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+  // ---------- state ----------
+  const todayStr = ymd(new Date());
+  const state = {
+    entries: {},
+    settings: { opening: 250 },
+    view: (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })(),
+    selected: todayStr,
+    dirty: false,
+    journalAll: false,
+  };
+
+  // ---------- storage ----------
+  const store = {
+    mode: "loading",
+    db: null,
+    loadLocal() {
+      try {
+        const raw = localStorage.getItem(LOCAL_KEY);
+        if (raw) { const p = JSON.parse(raw); state.entries = p.entries || {}; if (p.settings) state.settings = p.settings; }
+      } catch (e) {}
+    },
+    saveLocal() {
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ entries: state.entries, settings: state.settings })); return true; }
+      catch (e) { return false; }
+    },
+    async put(date, data) {
+      if (this.mode === "db") await this.db.collection("journal").doc(date).set(data);
+      state.entries[date] = data;
+      if (this.mode !== "db" && !this.saveLocal()) throw { message: "This browser blocked saving." };
+    },
+    async remove(date) {
+      if (this.mode === "db") await this.db.collection("journal").doc(date).delete();
+      delete state.entries[date];
+      if (this.mode !== "db") this.saveLocal();
+    },
+    async putSettings(s) {
+      if (this.mode === "db") await this.db.doc("settings/account").set(s);
+      state.settings = s;
+      if (this.mode !== "db") this.saveLocal();
+    },
+  };
+
+  function setSync(mode, text) {
+    store.mode = mode;
+    $("#sync").dataset.mode = mode;
+    $("#syncText").textContent = text;
+  }
+
+  async function connect() {
+    if (!window.claude || typeof window.claude.use !== "function") {
+      store.loadLocal();
+      setSync("local", "Saved in this browser");
+      renderAll(true);
+      return;
+    }
+    let db = null;
+    try { db = await window.claude.use("db"); } catch (e) { db = null; }
+    if (!db) {
+      store.loadLocal();
+      setSync("local", "Saved in this browser only");
+      renderAll(true);
+      return;
+    }
+    store.db = db;
+    setSync("db", "Saved to your account");
+    db.collection("journal").onSnapshot((snap) => {
+      const next = {};
+      snap.docs.forEach((d) => { if (d.exists) next[d.id] = d.data(); });
+      state.entries = next;
+      renderAll(!state.dirty);
+    }, () => setSync("local", "Connection lost. Reload to keep saving"));
+    db.doc("settings/account").onSnapshot((snap) => {
+      if (snap.exists) {
+        const s = snap.data();
+        if (typeof s.opening === "number") state.settings = { ...state.settings, ...s };
+        renderAll(false);
+      }
+    }, () => {});
+  }
+
+  // ---------- derived numbers ----------
+  function derive() {
+    const opening = state.settings.opening;
+    const dates = Object.keys(state.entries).sort();
+    let bal = opening, net = 0, out = 0, wins = 0, losses = 0, be = 0, planYes = 0, planN = 0;
+    let best = null, worst = null;
+    const series = [{ date: null, bal: opening }];
+    const after = {};
+    for (const d of dates) {
+      const e = state.entries[d];
+      const pnl = Number(e.pnl) || 0, wd = Number(e.withdrawal) || 0;
+      bal = round2(bal + pnl - wd);
+      after[d] = bal;
+      series.push({ date: d, bal });
+      net += pnl; out += wd;
+      if (e.result === "win") wins++;
+      else if (e.result === "loss") losses++;
+      else if (e.result === "be") be++;
+      if (e.plan === "yes" || e.plan === "no") { planN++; if (e.plan === "yes") planYes++; }
+      if (e.result === "win" || e.result === "loss") {
+        if (!best || pnl > best.pnl) best = { d, pnl };
+        if (!worst || pnl < worst.pnl) worst = { d, pnl };
+      }
+    }
+    // streak of most recent days the plan was followed
+    let streak = 0;
+    for (let i = dates.length - 1; i >= 0; i--) {
+      const p = state.entries[dates[i]].plan;
+      if (p === "yes") streak++;
+      else if (p === "no") break;
+    }
+    return { opening, dates, balance: bal, net: round2(net), out: round2(out), wins, losses, be, planYes, planN, best, worst, series, after, streak };
+  }
+
+  function balanceBefore(date) {
+    let bal = state.settings.opening;
+    for (const d of Object.keys(state.entries).sort()) {
+      if (d >= date) break;
+      const e = state.entries[d];
+      bal += (Number(e.pnl) || 0) - (Number(e.withdrawal) || 0);
+    }
+    return round2(bal);
+  }
+
+  // ---------- render ----------
+  function renderAll(refreshSheet) {
+    const D = derive();
+    renderSummary(D);
+    renderCalendar();
+    renderLists(D);
+    if (refreshSheet) fillSheet();
+    else updateSheetBalances();
+  }
+
+  function renderSummary(D) {
+    $("#balance").textContent = moneyS(D.balance);
+    $("#openingVal").textContent = money(D.opening);
+    const growth = D.opening ? (D.net / D.opening) * 100 : 0;
+    const g = $("#growth");
+    if (D.dates.length) {
+      g.textContent = signed(D.net) + " trading · " + (growth >= 0 ? "+" : "−") + Math.abs(growth).toFixed(1) + "%";
+      g.className = "delta num " + (D.net > 0 ? "gain" : D.net < 0 ? "loss" : "muted");
+    } else { g.textContent = "No days logged yet"; g.className = "delta muted"; }
+
+    const sNet = $("#sNet");
+    sNet.textContent = signed(D.net);
+    sNet.className = "v " + (D.net > 0 ? "gain" : D.net < 0 ? "loss" : "");
+    $("#sNetSub").textContent = D.best
+      ? "Best " + compact(D.best.pnl) + " · worst " + compact(D.worst.pnl)
+      : "from trading only";
+
+    $("#sOut").textContent = money(D.out);
+    const wdCount = D.dates.filter((d) => Number(state.entries[d].withdrawal) > 0).length;
+    $("#sOutSub").textContent = wdCount ? wdCount + (wdCount === 1 ? " withdrawal" : " withdrawals") : "no withdrawals yet";
+
+    const decided = D.wins + D.losses;
+    $("#sRate").textContent = decided ? Math.round((D.wins / decided) * 100) + "%" : "–";
+    $("#sRateSub").textContent = D.wins + (D.wins === 1 ? " win" : " wins") + " · " + D.losses + (D.losses === 1 ? " loss" : " losses") + (D.be ? " · " + D.be + " BE" : "");
+    $("#sRateBar").style.width = decided ? (D.wins / decided) * 100 + "%" : "0";
+    $("#sRateBar").parentElement.style.background = decided ? "" : "var(--sunk)";
+
+    $("#sPlan").textContent = D.planN ? Math.round((D.planYes / D.planN) * 100) + "%" : "–";
+    $("#sPlanSub").textContent = D.planN
+      ? D.planYes + " of " + D.planN + " days · streak " + D.streak
+      : "mark it on each trading day";
+
+    const first = D.dates[0];
+    $("#subline").textContent = first
+      ? "Started " + shortDate(first) + " with " + money(D.opening) + ". " + D.dates.length + (D.dates.length === 1 ? " day" : " days") + " in the book."
+      : "Started with " + money(D.opening) + ". Log every day: win, loss or rest, it goes in the book.";
+
+    renderChart(D);
+  }
+
+  function renderChart(D) {
+    const box = $("#chart");
+    box.textContent = "";
+    const W = Math.max(240, box.clientWidth || 600), H = 150, padT = 16, padB = 22;
+    const pts = D.series;
+    const vals = pts.map((p) => p.bal);
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (max - min < 1) { const pad = Math.max(10, Math.abs(max) * 0.1); min -= pad; max += pad; }
+    else { const pad = (max - min) * 0.12; min -= pad; max += pad; }
+    const y = (v) => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+    const n = pts.length;
+    const x = (i) => (n === 1 ? W : (i / (n - 1)) * (W - 8));
+    const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Balance from " + money(D.opening) + " to " + moneyS(D.balance) });
+
+    // grid: top, middle, bottom
+    [max - (max - min) * 0.12, (max + min) / 2, min + (max - min) * 0.12].forEach((v) => {
+      const yy = y(v);
+      svg.appendChild(svgEl("line", { x1: 0, x2: W, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1 }));
+      const t = svgEl("text", { x: 0, y: yy - 4, fill: "var(--muted)", "font-size": 10.5, "font-family": "var(--font-num)" });
+      t.textContent = moneyS(round2(v));
+      svg.appendChild(t);
+    });
+    // opening reference
+    const oy = y(D.opening);
+    svg.appendChild(svgEl("line", { x1: 0, x2: W, y1: oy, y2: oy, stroke: "var(--muted)", "stroke-width": 1, "stroke-dasharray": "3 4", opacity: 0.7 }));
+
+    const up = D.balance >= D.opening;
+    const color = up ? "var(--gain)" : "var(--loss)";
+    let line;
+    if (n === 1) line = "M0 " + oy + " L" + W + " " + oy;
+    else line = pts.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.bal).toFixed(1)).join(" ");
+    const lastX = n === 1 ? W : x(n - 1);
+    const area = line + " L" + lastX.toFixed(1) + " " + (H - padB) + " L0 " + (H - padB) + " Z";
+    svg.appendChild(svgEl("path", { d: area, fill: color, opacity: 0.1 }));
+    svg.appendChild(svgEl("path", { d: line, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const ey = n === 1 ? oy : y(pts[n - 1].bal);
+    svg.appendChild(svgEl("circle", { cx: lastX, cy: ey, r: 4.5, fill: color, stroke: "var(--surface)", "stroke-width": 2 }));
+
+    const cap = svgEl("text", { x: 0, y: H - 4, fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-body)" });
+    cap.textContent = n === 1 ? "Your balance line grows as you log days" : "Start";
+    svg.appendChild(cap);
+    if (n > 1) {
+      const end = svgEl("text", { x: W, y: H - 4, fill: "var(--muted)", "font-size": 11, "font-family": "var(--font-body)", "text-anchor": "end" });
+      end.textContent = shortDate(pts[n - 1].date).slice(4, -5);
+      svg.appendChild(end);
+    }
+    box.appendChild(svg);
+  }
+
+  function renderCalendar() {
+    const y = state.view.getFullYear(), m = state.view.getMonth();
+    $("#monthTitle").textContent = MONTHS[m] + " " + y;
+    const grid = $("#grid");
+    grid.textContent = "";
+    ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach((d) => {
+      const h = document.createElement("div"); h.className = "dow"; h.textContent = d; grid.appendChild(h);
+    });
+    const wh = document.createElement("div"); wh.className = "dow wkh"; wh.textContent = "Week"; grid.appendChild(wh);
+
+    const offset = (new Date(y, m, 1).getDay() + 6) % 7;
+    const dim = new Date(y, m + 1, 0).getDate();
+    const rows = Math.ceil((offset + dim) / 7);
+    let mNet = 0, mOut = 0, mW = 0, mL = 0, mDays = 0;
+
+    for (let r = 0; r < rows; r++) {
+      let wk = 0, wkDays = 0;
+      for (let c = 0; c < 7; c++) {
+        const dn = r * 7 + c - offset + 1;
+        if (dn < 1 || dn > dim) {
+          const b = document.createElement("div"); b.className = "day blank"; grid.appendChild(b); continue;
+        }
+        const ds = y + "-" + pad(m + 1) + "-" + pad(dn);
+        const e = state.entries[ds];
+        const cell = document.createElement("button");
+        cell.type = "button";
+        cell.className = "day" + (c >= 5 ? " weekend" : "") + (ds === todayStr ? " today" : "") + (ds === state.selected ? " selected" : "");
+        const dEl = document.createElement("span"); dEl.className = "d"; dEl.textContent = dn; cell.appendChild(dEl);
+        let label = longDate(ds);
+        if (e) {
+          cell.classList.add("has");
+          const pnl = Number(e.pnl) || 0, wd = Number(e.withdrawal) || 0;
+          if (e.result === "win") cell.classList.add("win");
+          if (e.result === "loss") cell.classList.add("loss");
+          const marks = document.createElement("span"); marks.className = "marks";
+          if (e.note) { const s = document.createElement("span"); s.className = "mk-note"; marks.appendChild(s); }
+          if (e.plan === "no") { const s = document.createElement("span"); s.className = "mk-broke"; marks.appendChild(s); }
+          cell.appendChild(marks);
+          if (e.result === "win" || e.result === "loss" || e.result === "be") {
+            const tag = document.createElement("span"); tag.className = "tag";
+            tag.textContent = e.trades ? e.trades + (e.trades == 1 ? " trade" : " trades") : (e.result === "be" ? "Break-even" : "");
+            cell.appendChild(tag);
+            const a = document.createElement("span");
+            a.className = "amt " + (pnl > 0 ? "gain" : pnl < 0 ? "loss" : "muted");
+            a.textContent = e.result === "be" ? "R0" : compact(pnl);
+            cell.appendChild(a);
+            label += ", " + (e.result === "be" ? "break-even" : signed(pnl));
+            mDays++; wkDays++;
+            if (e.result === "win") mW++;
+            if (e.result === "loss") mL++;
+          } else if (!wd) {
+            const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = "No trade"; tag.style.marginTop = "auto"; cell.appendChild(tag);
+          }
+          if (wd) {
+            const o = document.createElement("span"); o.className = "out"; o.textContent = "out " + compact(wd).replace("+", "");
+            if (!(e.result === "win" || e.result === "loss" || e.result === "be")) o.style.marginTop = "auto";
+            cell.appendChild(o);
+            label += ", withdrew " + money(wd);
+          }
+          wk += pnl; mNet += pnl; mOut += wd;
+        }
+        cell.setAttribute("aria-label", label);
+        cell.addEventListener("click", () => selectDay(ds));
+        grid.appendChild(cell);
+      }
+      const w = document.createElement("div"); w.className = "wk";
+      const wl = document.createElement("span"); wl.className = "l"; wl.textContent = "Wk " + (r + 1);
+      const wv = document.createElement("span");
+      wk = round2(wk);
+      wv.className = "v " + (wk > 0 ? "gain" : wk < 0 ? "loss" : "muted");
+      wv.textContent = wkDays ? compact(wk) : "–";
+      w.append(wl, wv);
+      grid.appendChild(w);
+    }
+    mNet = round2(mNet); mOut = round2(mOut);
+    const foot = $("#monthFoot");
+    foot.innerHTML = "";
+    const add = (lbl, val, cls) => {
+      const s = document.createElement("span"); s.textContent = lbl + " ";
+      const b = document.createElement("b"); b.textContent = val; if (cls) b.className = cls; s.appendChild(b); foot.appendChild(s);
+    };
+    add("Month P&L", mDays ? signed(mNet) : "–", mNet > 0 ? "gain" : mNet < 0 ? "loss" : "");
+    add("Trading days", String(mDays));
+    add("Green / red", mW + " / " + mL);
+    add("Withdrawn", money(mOut), mOut ? "cash" : "");
+  }
+
+  function renderLists(D) {
+    // withdrawals
+    const wds = D.dates.filter((d) => Number(state.entries[d].withdrawal) > 0).reverse();
+    $("#wdTotal").textContent = money(D.out);
+    const wl = $("#wdList"); wl.textContent = "";
+    if (!wds.length) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = "No withdrawals yet. When you take money out, record it on that day so your balance stays true.";
+      wl.appendChild(e);
+    }
+    wds.forEach((d) => {
+      const it = document.createElement("button"); it.type = "button"; it.className = "item";
+      const top = document.createElement("div"); top.className = "item-top";
+      const w = document.createElement("span"); w.className = "when"; w.textContent = shortDate(d);
+      const a = document.createElement("span"); a.className = "num cash"; a.style.fontWeight = "600"; a.textContent = "−" + money(state.entries[d].withdrawal);
+      top.append(w, a);
+      const sub = document.createElement("span"); sub.className = "muted"; sub.style.fontSize = "13px";
+      sub.textContent = "Balance after: " + moneyS(D.after[d]);
+      it.append(top, sub);
+      it.addEventListener("click", () => selectDay(d, true));
+      wl.appendChild(it);
+    });
+
+    // journal
+    const days = D.dates.slice().reverse().filter((d) => {
+      const e = state.entries[d]; return e.note || e.result !== "none";
+    });
+    $("#journalCount").textContent = days.length ? days.length + (days.length === 1 ? " entry" : " entries") : "";
+    const jl = $("#journal"); jl.textContent = "";
+    if (!days.length) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = "Your entries show up here. Pick today on the calendar, log the result, mark whether you followed your plan, and write what you learned.";
+      jl.appendChild(e);
+    }
+    const shown = state.journalAll ? days : days.slice(0, 8);
+    shown.forEach((d) => {
+      const en = state.entries[d];
+      const it = document.createElement("button"); it.type = "button"; it.className = "item";
+      const top = document.createElement("div"); top.className = "item-top";
+      const w = document.createElement("span"); w.className = "when"; w.textContent = shortDate(d);
+      const chips = document.createElement("span"); chips.className = "chips";
+      const chip = (txt, cls) => { const c = document.createElement("span"); c.className = "chip " + (cls || ""); c.textContent = txt; chips.appendChild(c); };
+      const pnl = Number(en.pnl) || 0;
+      if (en.result === "win") chip("Win " + compact(pnl), "win");
+      else if (en.result === "loss") chip("Loss " + compact(pnl), "loss");
+      else if (en.result === "be") chip("Break-even");
+      else chip("No trade");
+      if (en.plan === "yes") chip("Plan followed", "win");
+      if (en.plan === "no") chip("Plan broken", "loss");
+      if (Number(en.withdrawal) > 0) chip("Withdrew " + money(en.withdrawal), "cash");
+      top.append(w, chips);
+      it.appendChild(top);
+      const n = document.createElement("div"); n.className = "note";
+      if (en.note) n.textContent = en.note;
+      else { n.textContent = "No notes for this day."; n.classList.add("muted"); }
+      it.appendChild(n);
+      it.addEventListener("click", () => selectDay(d, true));
+      jl.appendChild(it);
+    });
+    const more = $("#moreJournal");
+    more.hidden = days.length <= 8;
+    more.textContent = state.journalAll ? "Show fewer" : "Show all " + days.length + " entries";
+  }
+
+  // ---------- day sheet ----------
+  const form = $("#sheet");
+  const getRadio = (name) => (form.querySelector('input[name="' + name + '"]:checked') || {}).value || "";
+  const setRadio = (name, v) => form.querySelectorAll('input[name="' + name + '"]').forEach((i) => { i.checked = i.value === v; });
+
+  function syncAmountField() {
+    const r = getRadio("result");
+    const amt = $("#amount");
+    const on = r === "win" || r === "loss";
+    amt.disabled = !on;
+    if (!on) amt.value = "";
+    $("#amountLabel").textContent = r === "win" ? "Amount made" : r === "loss" ? "Amount lost" : "Amount";
+  }
+
+  function fillSheet() {
+    const d = state.selected;
+    const e = state.entries[d] || {};
+    $("#sheetEyebrow").textContent = d === todayStr ? "Today" : d < todayStr ? "Past day" : "Upcoming day";
+    $("#sheetTitle").textContent = longDate(d) + (parseYmd(d).getFullYear() !== new Date().getFullYear() ? " " + parseYmd(d).getFullYear() : "");
+    setRadio("result", e.result || "none");
+    setRadio("plan", e.plan || "");
+    $("#amount").value = e.pnl ? Math.abs(e.pnl).toFixed(2) : "";
+    $("#trades").value = e.trades || "";
+    $("#withdrawal").value = e.withdrawal ? Number(e.withdrawal).toFixed(2) : "";
+    $("#note").value = e.note || "";
+    syncAmountField();
+    state.dirty = false;
+    disarmClear();
+    $("#clearBtn").hidden = !state.entries[d];
+    updateSheetBalances();
+  }
+
+  function readForm() {
+    const result = getRadio("result") || "none";
+    const amt = parseAmount($("#amount").value);
+    const wd = parseAmount($("#withdrawal").value);
+    const trades = $("#trades").value.trim() === "" ? 0 : Number($("#trades").value.trim());
+    let pnl = 0;
+    if (result === "win") pnl = Math.abs(amt);
+    if (result === "loss") pnl = -Math.abs(amt);
+    return { result, amt, pnl, wd, trades, plan: getRadio("plan"), note: $("#note").value.trim() };
+  }
+
+  function updateSheetBalances() {
+    const before = balanceBefore(state.selected);
+    const f = readForm();
+    const p = Number.isFinite(f.pnl) ? f.pnl : 0, w = Number.isFinite(f.wd) ? f.wd : 0;
+    $("#balBefore").textContent = moneyS(before);
+    const after = round2(before + p - w);
+    const b = $("#balAfter");
+    b.textContent = moneyS(after);
+    b.className = after > before ? "gain" : after < before ? "loss" : "";
+  }
+
+  function setStatus(msg, kind) { const s = $("#status"); s.textContent = msg; s.className = "status " + (kind || ""); }
+
+  function selectDay(ds, scroll) {
+    if (state.dirty && ds !== state.selected) {
+      setStatus("You have unsaved changes on " + shortDate(state.selected) + ". Save or clear them first.", "err");
+      return;
+    }
+    state.selected = ds;
+    const d = parseYmd(ds);
+    if (d.getMonth() !== state.view.getMonth() || d.getFullYear() !== state.view.getFullYear()) state.view = new Date(d.getFullYear(), d.getMonth(), 1);
+    setStatus("");
+    renderCalendar();
+    fillSheet();
+    if (scroll || window.matchMedia("(max-width: 980px)").matches) form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  form.addEventListener("input", (ev) => {
+    if (ev.target.name === "result") syncAmountField();
+    state.dirty = true;
+    setStatus("Unsaved changes");
+    updateSheetBalances();
+  });
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = readForm();
+    const d = state.selected;
+    if ((f.result === "win" || f.result === "loss") && (!f.amt || isNaN(f.amt))) {
+      setStatus("Enter how much you " + (f.result === "win" ? "made" : "lost") + " on this day.", "err"); $("#amount").focus(); return;
+    }
+    if (isNaN(f.amt) || isNaN(f.wd) || f.wd < 0) { setStatus("Use numbers only for amounts, like 45 or 45.50.", "err"); return; }
+    if (!Number.isFinite(f.trades) || f.trades < 0) { setStatus("Trades taken should be a whole number, like 3.", "err"); return; }
+    const before = balanceBefore(d);
+    if (f.wd > 0 && f.wd > round2(before + f.pnl)) {
+      setStatus("That withdrawal is more than the " + moneyS(round2(before + f.pnl)) + " in the account on this day.", "err"); $("#withdrawal").focus(); return;
+    }
+    const empty = f.result === "none" && !f.wd && !f.note && !f.plan;
+    const btn = $("#saveBtn"); btn.disabled = true;
+    try {
+      if (empty) {
+        if (state.entries[d]) await store.remove(d);
+        state.dirty = false;
+        setStatus("Nothing to save, so this day is empty.");
+      } else {
+        await store.put(d, {
+          date: d, result: f.result, pnl: f.pnl, withdrawal: f.wd, trades: Math.round(f.trades),
+          plan: f.plan, note: f.note, updatedAt: new Date().toISOString(),
+        });
+        state.dirty = false;
+        setStatus("Saved " + shortDate(d) + ".", "ok");
+      }
+      renderAll(true);
+      setStatus(empty ? "Nothing to save, so this day is empty." : "Saved " + shortDate(d) + ".", empty ? "" : "ok");
+    } catch (e) {
+      setStatus("Couldn't save: " + ((e && e.message) || "try again in a moment") + ".", "err");
+    } finally { btn.disabled = false; }
+  });
+
+  let armTimer = null;
+  function disarmClear() { const b = $("#clearBtn"); b.classList.remove("armed"); b.textContent = "Clear day"; clearTimeout(armTimer); }
+  $("#clearBtn").addEventListener("click", async () => {
+    const b = $("#clearBtn");
+    if (!b.classList.contains("armed")) {
+      b.classList.add("armed"); b.textContent = "Tap again to delete this day";
+      armTimer = setTimeout(disarmClear, 4000); return;
+    }
+    disarmClear();
+    try {
+      await store.remove(state.selected);
+      state.dirty = false;
+      renderAll(true);
+      setStatus("Cleared " + shortDate(state.selected) + ".");
+    } catch (e) { setStatus("Couldn't clear this day. Try again.", "err"); }
+  });
+
+  // ---------- controls ----------
+  $("#prevM").addEventListener("click", () => { state.view = new Date(state.view.getFullYear(), state.view.getMonth() - 1, 1); renderCalendar(); });
+  $("#nextM").addEventListener("click", () => { state.view = new Date(state.view.getFullYear(), state.view.getMonth() + 1, 1); renderCalendar(); });
+  $("#todayBtn").addEventListener("click", () => selectDay(todayStr));
+  $("#addWithdrawal").addEventListener("click", () => {
+    if (state.dirty && state.selected !== todayStr) { setStatus("Save or clear your changes first.", "err"); return; }
+    selectDay(todayStr, true);
+    setTimeout(() => $("#withdrawal").focus({ preventScroll: true }), 300);
+  });
+  $("#moreJournal").addEventListener("click", () => { state.journalAll = !state.journalAll; renderLists(derive()); });
+
+  $("#editOpening").addEventListener("click", () => {
+    $("#openingRow").hidden = true; $("#openingForm").hidden = false;
+    $("#openingInput").value = state.settings.opening.toFixed(2); $("#openingInput").focus();
+  });
+  $("#cancelOpening").addEventListener("click", () => { $("#openingRow").hidden = false; $("#openingForm").hidden = true; });
+  $("#openingForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const v = parseAmount($("#openingInput").value);
+    if (isNaN(v) || v < 0) { $("#openingInput").focus(); return; }
+    try { await store.putSettings({ ...state.settings, opening: v }); } catch (e) {}
+    $("#openingRow").hidden = false; $("#openingForm").hidden = true;
+    renderAll(false);
+  });
+
+  let rz;
+  window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => renderChart(derive()), 120); });
+
+  renderAll(true);
+  connect();
+})();
+</script>
